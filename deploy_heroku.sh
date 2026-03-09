@@ -21,5 +21,5 @@ fi
 git push heroku main
 heroku ps:scale web=1 -a "$APP_NAME"
 
-APP_URL="https://${APP_NAME}.herokuapp.com"
-echo "Deployed URL: $APP_URL"
+APP_URL="$(heroku apps:info -a "$APP_NAME" | awk '/Web URL:/ {print $3}')"
+echo "Deployed URL: ${APP_URL%/}"
