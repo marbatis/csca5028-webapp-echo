@@ -20,3 +20,15 @@ Open: `http://127.0.0.1:5000`
 - `Procfile`
 - `requirements.txt`
 - `.python-version`
+
+## Deploy to Heroku (after login)
+
+```bash
+# One-time: authenticate CLI
+heroku login
+
+# Deploy (optionally pass your preferred app name)
+./deploy_heroku.sh csca5028-echo-yourname
+```
+
+The script will output your public URL when deployment completes.
