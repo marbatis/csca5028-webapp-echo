@@ -3,13 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>User Input Echo App</title>
+    <title>The '87 Land Cruiser Finder</title>
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        max-width: 720px;
-        margin: 3rem auto;
+        max-width: 860px;
+        margin: 2rem auto;
         padding: 0 1rem;
+      }
+      h1 {
+        margin-bottom: 0.2rem;
+      }
+      .subtitle {
+        color: #2d4a72;
+        margin-top: 0;
+      }
+      .panel {
+        margin: 1rem 0 1.5rem;
+        padding: 1rem;
+        background: #f5f7fb;
+        border: 1px solid #d7dce6;
+        border-radius: 8px;
+      }
+      .panel ul {
+        margin: 0.4rem 0 0;
       }
       form {
         display: flex;
@@ -28,18 +45,37 @@
       .result {
         margin-top: 1rem;
         padding: 0.8rem;
-        background: #f5f7fb;
-        border: 1px solid #d7dce6;
+        background: #eef8f2;
+        border: 1px solid #bfdcc6;
         border-radius: 8px;
+      }
+      code {
+        background: #f3f4f8;
+        border: 1px solid #d7dce6;
+        border-radius: 4px;
+        padding: 0.1rem 0.3rem;
       }
     </style>
   </head>
   <body>
-    <h1>User Input Echo App</h1>
-    <p>Enter text and submit to see it echoed back.</p>
+    <h1>The '87 Land Cruiser Finder</h1>
+    <p class="subtitle">Event-Driven Data Pipeline and Web Application</p>
+
+    <div class="panel">
+      <strong>Capstone Components</strong>
+      <ul>
+        <li>Web App (stateless UI and monitoring endpoint)</li>
+        <li>Data Collector (external API ingestion)</li>
+        <li>Data Analyzer (summary and rollups)</li>
+        <li>Event Collaboration via RabbitMQ (producer/consumer)</li>
+      </ul>
+      <p>Monitoring endpoint: <code>/health</code></p>
+    </div>
+
+    <p>Interaction demo: enter text and submit to verify request/response behavior.</p>
 
     <form action="/echo" method="post">
-      <input type="text" name="user_input" placeholder="Type something..." required />
+      <input type="text" name="user_input" placeholder="Enter note or query..." required />
       <button type="submit">Submit</button>
     </form>
 
