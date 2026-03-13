@@ -64,12 +64,23 @@
     <div class="panel">
       <strong>Capstone Components</strong>
       <ul>
-        <li>Web App (stateless UI and monitoring endpoint)</li>
-        <li>Data Collector (external API ingestion)</li>
-        <li>Data Analyzer (summary and rollups)</li>
-        <li>Event Collaboration via RabbitMQ (producer/consumer)</li>
+        <li>Web App: stateless process serving user requests and REST endpoints</li>
+        <li>Data Collector: independent process that fetches data from external APIs</li>
+        <li>Data Analyzer: independent process that reads raw data and writes rollups</li>
+        <li>Event Collaboration: RabbitMQ producer/consumer for async component communication</li>
       </ul>
       <p>Monitoring endpoint: <code>/health</code></p>
+    </div>
+
+    <div class="panel">
+      <strong>Process Independence and Triggers</strong>
+      <ul>
+        <li>Collector trigger: scheduled with cron/Heroku Scheduler (for example hourly)</li>
+        <li>Analyzer trigger: scheduled interval and/or event-triggered after collection</li>
+        <li>Web App trigger: user HTTP requests in real time</li>
+        <li>Event trigger: collector publishes <code>inventory.collection.completed</code> to queue</li>
+      </ul>
+      <p>Each process can run, scale, and fail independently without blocking the others.</p>
     </div>
 
     <p>Interaction demo: enter text and submit to verify request/response behavior.</p>
