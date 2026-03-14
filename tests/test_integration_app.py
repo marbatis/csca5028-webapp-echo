@@ -11,6 +11,7 @@ def test_home_page_renders_reporting_sections() -> None:
     assert b"Inventory Report" in response.data
     assert b"Total Records" in response.data
     assert b"API endpoints" in response.data
+    assert b"Year scope is locked to" in response.data
 
 
 def test_echo_endpoint_returns_submitted_text() -> None:
@@ -44,6 +45,16 @@ def test_inventory_api_supports_filters() -> None:
     assert all(int(row["model_year"]) == 1987 for row in payload["items"])
 
 
+def test_inventory_api_enforces_project_year_scope() -> None:
+    with app.test_client() as client:
+        response = client.get("/api/v1/inventory?min_year=1980&max_year=1990")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] > 0
+    assert all(int(row["model_year"]) == 1987 for row in payload["items"])
+
+
 def test_summary_api_returns_rollup() -> None:
     with app.test_client() as client:
         _ = client.get("/")
@@ -52,8 +63,9 @@ def test_summary_api_returns_rollup() -> None:
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["total_records"] > 0
-    assert payload["distinct_years"] > 0
-    assert payload["year_start"] <= payload["year_end"]
+    assert payload["distinct_years"] == 1
+    assert payload["year_start"] == 1987
+    assert payload["year_end"] == 1987
     assert payload["request_count"] >= 2
 
 

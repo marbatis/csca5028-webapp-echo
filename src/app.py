@@ -18,6 +18,7 @@ app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 REQUEST_COUNT = 0
 SEED_YEAR_START = 1980
 SEED_YEAR_END = 1990
+DEFAULT_PROJECT_YEAR = 1987
 REQUEST_HEADERS = {"User-Agent": "csca5028-land-cruiser-finder-web/1.0"}
 VPIC_URL_TEMPLATE = (
     "https://vpic.nhtsa.dot.gov/api/vehicles/"
@@ -59,6 +60,28 @@ def parse_int(raw: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def get_project_year() -> int:
+    raw = os.getenv("PROJECT_YEAR", str(DEFAULT_PROJECT_YEAR)).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_PROJECT_YEAR
+
+
+def enforce_project_year_only() -> bool:
+    raw = os.getenv("ENFORCE_PROJECT_YEAR", "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def scoped_year_filters(min_year: int | None, max_year: int | None) -> tuple[int | None, int | None]:
+    project_year = get_project_year()
+    if enforce_project_year_only():
+        return project_year, project_year
+    if min_year is None and max_year is None:
+        return project_year, project_year
+    return min_year, max_year
 
 
 def get_db_path() -> Path:
@@ -302,15 +325,18 @@ def build_external_detail_url(row: dict[str, Any]) -> str | None:
             f"&year1={model_year}&year2={model_year}&make=Toyota&model={quote_plus(model_name)}"
             "&srchtyp=ymm&pageno=1"
         )
+    if model_year:
+        return (
+            "https://vpic.nhtsa.dot.gov/api/vehicles/"
+            f"GetModelsForMakeYear/make/toyota/modelyear/{model_year}?format=json"
+        )
     return None
 
 
 def render_dashboard(echoed_text: str | None = None) -> str:
     min_year = parse_int(request.args.get("min_year"))
     max_year = parse_int(request.args.get("max_year"))
-    if min_year is None and max_year is None:
-        min_year = 1987
-        max_year = 1987
+    min_year, max_year = scoped_year_filters(min_year, max_year)
 
     model_contains = request.args.get("model_contains", "").strip()
     rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
@@ -324,10 +350,10 @@ def render_dashboard(echoed_text: str | None = None) -> str:
         rows=rows,
         summary=summary,
         filters={
-            "min_year": min_year if min_year is not None else "",
-            "max_year": max_year if max_year is not None else "",
             "model_contains": model_contains,
         },
+        project_year=min_year if min_year is not None else get_project_year(),
+        enforce_project_year=enforce_project_year_only(),
     )
 
 
@@ -352,6 +378,7 @@ def echo() -> str:
 def api_inventory() -> Response:
     min_year = parse_int(request.args.get("min_year"))
     max_year = parse_int(request.args.get("max_year"))
+    min_year, max_year = scoped_year_filters(min_year, max_year)
     model_contains = request.args.get("model_contains", "").strip()
     rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
     return jsonify({"count": len(rows), "items": rows})
@@ -361,6 +388,7 @@ def api_inventory() -> Response:
 def api_summary() -> Response:
     min_year = parse_int(request.args.get("min_year"))
     max_year = parse_int(request.args.get("max_year"))
+    min_year, max_year = scoped_year_filters(min_year, max_year)
     model_contains = request.args.get("model_contains", "").strip()
     rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
     summary = summarize_inventory(rows)
@@ -387,7 +415,8 @@ def health() -> tuple[dict[str, Any], int]:
 
 @app.route("/metrics", methods=["GET"])
 def metrics() -> Response:
-    summary = summarize_inventory(fetch_inventory_rows(limit=1000))
+    min_year, max_year = scoped_year_filters(None, None)
+    summary = summarize_inventory(fetch_inventory_rows(min_year=min_year, max_year=max_year, limit=1000))
     lines = [
         "# HELP app_requests_total Total HTTP requests handled by the app",
         "# TYPE app_requests_total counter",

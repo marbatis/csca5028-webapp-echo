@@ -143,11 +143,13 @@
     <h2>Inventory Report</h2>
     <p class="muted">
       Filtered view over persisted records loaded by the collector process.
-      Default view is focused on model year <strong>1987</strong>.
+      {% if enforce_project_year %}
+        Year scope is locked to <strong>{{ project_year }}</strong> for this deployment.
+      {% else %}
+        Default view is focused on model year <strong>{{ project_year }}</strong>.
+      {% endif %}
     </p>
     <form action="/" method="get" class="row">
-      <input type="number" name="min_year" value="{{ filters.min_year }}" placeholder="Min year" />
-      <input type="number" name="max_year" value="{{ filters.max_year }}" placeholder="Max year" />
       <input
         type="text"
         name="model_contains"
@@ -200,7 +202,7 @@
               <td>{{ row.external_id }}</td>
               <td>
                 {% if row.external_url %}
-                  <a href="{{ row.external_url }}" target="_blank" rel="noopener noreferrer">Open source</a>
+                  <a href="{{ row.external_url }}" target="_blank" rel="noopener noreferrer">View details</a>
                 {% else %}
                   N/A
                 {% endif %}
