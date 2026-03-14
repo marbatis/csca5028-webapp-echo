@@ -122,7 +122,7 @@
       <strong>Capstone Components</strong>
       <ul>
         <li>Web App: stateless process serving user requests and REST endpoints</li>
-        <li>Data Collector: independent process that fetches data from external APIs and RSS</li>
+        <li>Data Collector: independent process that fetches listing data from online marketplaces/APIs</li>
         <li>Data Analyzer: independent process that reads raw data and writes rollups</li>
         <li>Event Collaboration: RabbitMQ producer/consumer for async component communication</li>
       </ul>
@@ -148,6 +148,7 @@
       {% else %}
         Default view is focused on model year <strong>{{ project_year }}</strong>.
       {% endif %}
+      Live listing sources include <strong>Bring a Trailer</strong> and <strong>ClassicCars.com</strong>.
     </p>
     <form action="/" method="get" class="row">
       <input
@@ -186,6 +187,7 @@
           <th>Model</th>
           <th>Make</th>
           <th>Source</th>
+          <th>Price</th>
           <th>External ID</th>
           <th>Reference Link</th>
           <th>Fetched At (UTC)</th>
@@ -198,7 +200,8 @@
               <td>{{ row.model_year }}</td>
               <td>{{ row.model_name }}</td>
               <td>{{ row.make_name }}</td>
-              <td>{{ row.source }}</td>
+              <td>{{ row.source_label }}</td>
+              <td>{{ row.listing_price if row.listing_price else "N/A" }}</td>
               <td>{{ row.external_id }}</td>
               <td>
                 {% if row.external_url %}
@@ -212,7 +215,7 @@
           {% endfor %}
         {% else %}
           <tr>
-            <td colspan="7">No records match your filters.</td>
+            <td colspan="8">No records match your filters.</td>
           </tr>
         {% endif %}
       </tbody>

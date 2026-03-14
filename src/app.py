@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
@@ -16,10 +18,17 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "land_cruiser.sqlite3"
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 REQUEST_COUNT = 0
-SEED_YEAR_START = 1980
-SEED_YEAR_END = 1990
 DEFAULT_PROJECT_YEAR = 1987
+SEED_YEAR_START = DEFAULT_PROJECT_YEAR
+SEED_YEAR_END = DEFAULT_PROJECT_YEAR
 REQUEST_HEADERS = {"User-Agent": "csca5028-land-cruiser-finder-web/1.0"}
+SOURCE_NHTSA_VPIC = "NHTSA_vPIC_MODELS"
+SOURCE_NHTSA_RECALLS = "NHTSA_RECALLS"
+SOURCE_FUEL_ECONOMY = "FUEL_ECONOMY_MENU"
+SOURCE_BAT_LISTINGS = "BAT_LISTINGS"
+SOURCE_CLASSICCARS_LISTINGS = "CLASSICCARS_LISTINGS"
+SOURCE_DEMO_MARKETPLACE = "DEMO_MARKETPLACE"
+MARKETPLACE_SOURCES = {SOURCE_BAT_LISTINGS, SOURCE_CLASSICCARS_LISTINGS, SOURCE_DEMO_MARKETPLACE}
 VPIC_URL_TEMPLATE = (
     "https://vpic.nhtsa.dot.gov/api/vehicles/"
     "GetModelsForMakeYear/make/toyota/modelyear/{year}?format=json"
@@ -30,6 +39,19 @@ RECALLS_URL_TEMPLATE = (
 )
 FUEL_MODEL_MENU_TEMPLATE = (
     "https://www.fueleconomy.gov/ws/rest/vehicle/menu/model?year={year}&make=Toyota"
+)
+BAT_AUCTIONS_SEARCH_TEMPLATE = "https://bringatrailer.com/auctions/?search={year}+toyota+land+cruiser"
+CLASSICCARS_SEARCH_TEMPLATE = "https://www.classiccars.com/listings/find/{year}/toyota/land-cruiser"
+CLASSICCARS_BASE_URL = "https://www.classiccars.com"
+
+BAT_LISTING_PATTERN = re.compile(
+    r'"title":"(?P<title>[^"]+)","url":"(?P<url>https:[\\\/]+bringatrailer\.com[\\\/]+listing[\\\/]+[^"]+)"'
+    r'.*?"year":"(?P<year>[0-9]{4})","id":(?P<id>[0-9]+)',
+    re.S,
+)
+CLASSICCARS_JSONLD_PATTERN = re.compile(
+    r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>',
+    re.S,
 )
 
 SAMPLE_RECORDS: list[dict[str, Any]] = [
@@ -60,6 +82,25 @@ def parse_int(raw: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def decode_json_escaped(value: str) -> str:
+    try:
+        return unescape(json.loads(f'"{value}"'))
+    except Exception:
+        return unescape(value)
+
+
+def source_display_name(source: str) -> str:
+    labels = {
+        SOURCE_BAT_LISTINGS: "Bring a Trailer",
+        SOURCE_CLASSICCARS_LISTINGS: "ClassicCars.com",
+        SOURCE_NHTSA_RECALLS: "NHTSA Recalls",
+        SOURCE_NHTSA_VPIC: "NHTSA vPIC",
+        SOURCE_FUEL_ECONOMY: "FuelEconomy.gov",
+        SOURCE_DEMO_MARKETPLACE: "Demo Marketplace",
+    }
+    return labels.get(source, source)
 
 
 def get_project_year() -> int:
@@ -107,6 +148,16 @@ def fetch_seed_records_from_online_sources() -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for year in range(SEED_YEAR_START, SEED_YEAR_END + 1):
         try:
+            records.extend(fetch_classiccars_listing_records_for_year(year))
+        except Exception:
+            pass
+
+        try:
+            records.extend(fetch_bat_listing_records_for_year(year))
+        except Exception:
+            pass
+
+        try:
             vpic_response = requests.get(
                 VPIC_URL_TEMPLATE.format(year=year),
                 timeout=15,
@@ -123,7 +174,7 @@ def fetch_seed_records_from_online_sources() -> list[dict[str, Any]]:
                     continue
                 records.append(
                     {
-                        "source": "NHTSA_vPIC_MODELS",
+                        "source": SOURCE_NHTSA_VPIC,
                         "external_id": model_id,
                         "make_name": str(row.get("Make_Name", "TOYOTA")).strip() or "TOYOTA",
                         "model_name": model_name,
@@ -148,7 +199,7 @@ def fetch_seed_records_from_online_sources() -> list[dict[str, Any]]:
                     continue
                 records.append(
                     {
-                        "source": "NHTSA_RECALLS",
+                        "source": SOURCE_NHTSA_RECALLS,
                         "external_id": campaign,
                         "make_name": str(row.get("Make", "TOYOTA")).strip() or "TOYOTA",
                         "model_name": str(row.get("Model", "LAND CRUISER")).strip() or "LAND CRUISER",
@@ -177,7 +228,7 @@ def fetch_seed_records_from_online_sources() -> list[dict[str, Any]]:
                 payload = {"text": model_name, "value": external_id, "model_year": year}
                 records.append(
                     {
-                        "source": "FUEL_ECONOMY_MENU",
+                        "source": SOURCE_FUEL_ECONOMY,
                         "external_id": external_id,
                         "make_name": "TOYOTA",
                         "model_name": model_name,
@@ -188,6 +239,129 @@ def fetch_seed_records_from_online_sources() -> list[dict[str, Any]]:
         except Exception:
             pass
     return records
+
+
+def fetch_bat_listing_records_for_year(year: int) -> list[dict[str, Any]]:
+    response = requests.get(
+        BAT_AUCTIONS_SEARCH_TEMPLATE.format(year=year),
+        timeout=15,
+        headers=REQUEST_HEADERS,
+    )
+    response.raise_for_status()
+    html = response.text
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for match in BAT_LISTING_PATTERN.finditer(html):
+        listing_year = int(match.group("year"))
+        if listing_year != year:
+            continue
+
+        title = decode_json_escaped(match.group("title")).strip()
+        if "LAND CRUISER" not in title.upper():
+            continue
+
+        listing_id = match.group("id").strip()
+        if not listing_id or listing_id in seen_ids:
+            continue
+        seen_ids.add(listing_id)
+
+        listing_url = match.group("url").replace("\\/", "/").strip()
+        payload = {
+            "marketplace": "Bring a Trailer",
+            "title": title,
+            "url": listing_url,
+            "year": listing_year,
+            "listing_id": listing_id,
+        }
+        records.append(
+            {
+                "source": SOURCE_BAT_LISTINGS,
+                "external_id": f"BAT-{listing_id}",
+                "make_name": "TOYOTA",
+                "model_name": title,
+                "model_year": listing_year,
+                "payload_json": json.dumps(payload, ensure_ascii=True),
+            }
+        )
+    return records
+
+
+def fetch_classiccars_listing_records_for_year(year: int) -> list[dict[str, Any]]:
+    response = requests.get(
+        CLASSICCARS_SEARCH_TEMPLATE.format(year=year),
+        timeout=15,
+        headers=REQUEST_HEADERS,
+    )
+    response.raise_for_status()
+    html = response.text
+    blocks = CLASSICCARS_JSONLD_PATTERN.findall(html)
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for block in blocks:
+        try:
+            payload = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+
+        model_year_raw = str(payload.get("modelDate", "")).strip()
+        if model_year_raw != str(year):
+            continue
+
+        manufacturer = str(payload.get("manufacturer", "")).strip().upper()
+        model = str(payload.get("model", "")).strip().upper()
+        name = str(payload.get("name", "")).strip()
+        if "TOYOTA" not in manufacturer or "LAND CRUISER" not in f"{model} {name}".upper():
+            continue
+
+        listing_id = str(payload.get("sku", "")).strip()
+        if not listing_id or listing_id in seen_ids:
+            continue
+        seen_ids.add(listing_id)
+
+        offers = payload.get("offers", {})
+        listing_url = ""
+        if isinstance(offers, dict):
+            listing_url = str(offers.get("url", "")).strip()
+        if listing_url.startswith("/"):
+            listing_url = f"{CLASSICCARS_BASE_URL}{listing_url}"
+        if not listing_url:
+            continue
+
+        normalized_payload = {
+            "marketplace": "ClassicCars.com",
+            "title": name,
+            "url": listing_url,
+            "year": year,
+            "listing_id": listing_id,
+            "price": offers.get("price") if isinstance(offers, dict) else None,
+            "price_currency": offers.get("priceCurrency") if isinstance(offers, dict) else None,
+        }
+        records.append(
+            {
+                "source": SOURCE_CLASSICCARS_LISTINGS,
+                "external_id": listing_id,
+                "make_name": "TOYOTA",
+                "model_name": name or "Toyota Land Cruiser",
+                "model_year": year,
+                "payload_json": json.dumps(normalized_payload, ensure_ascii=True),
+            }
+        )
+    return records
+
+
+def parse_payload(row: dict[str, Any]) -> dict[str, Any]:
+    raw = row.get("payload_json", "")
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(str(raw))
+        return payload if isinstance(payload, dict) else {}
+    except json.JSONDecodeError:
+        return {}
 
 
 def ensure_schema_and_seed() -> None:
@@ -233,14 +407,19 @@ def ensure_schema_and_seed() -> None:
                 )
         else:
             for row in SAMPLE_RECORDS:
+                demo_payload = {
+                    **row,
+                    "marketplace": "Demo Marketplace",
+                    "url": f"https://www.classiccars.com/listings/find/{row['model_year']}/toyota/land-cruiser",
+                }
                 payload.append(
                     (
-                        "SEED_DEMO",
+                        SOURCE_DEMO_MARKETPLACE,
                         row["external_id"],
                         "TOYOTA",
                         row["model_name"],
                         row["model_year"],
-                        json.dumps(row, ensure_ascii=True),
+                        json.dumps(demo_payload, ensure_ascii=True),
                         now,
                     )
                 )
@@ -259,6 +438,7 @@ def fetch_inventory_rows(
     min_year: int | None = None,
     max_year: int | None = None,
     model_contains: str | None = None,
+    marketplace_only: bool = True,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     ensure_schema_and_seed()
@@ -274,9 +454,14 @@ def fetch_inventory_rows(
     if model_contains:
         where.append("UPPER(model_name) LIKE ?")
         params.append(f"%{model_contains.upper()}%")
+    if marketplace_only:
+        source_list = sorted(MARKETPLACE_SOURCES)
+        placeholders = ", ".join("?" for _ in source_list)
+        where.append(f"source IN ({placeholders})")
+        params.extend(source_list)
 
     sql = """
-        SELECT id, source, external_id, make_name, model_name, model_year, fetched_at
+        SELECT id, source, external_id, make_name, model_name, model_year, payload_json, fetched_at
         FROM raw_inventory
     """
     if where:
@@ -311,15 +496,21 @@ def build_external_detail_url(row: dict[str, Any]) -> str | None:
     external_id = str(row.get("external_id", "")).strip()
     model_year = int(row.get("model_year", 0) or 0)
     model_name = str(row.get("model_name", "")).strip()
+    payload = parse_payload(row)
 
-    if source == "NHTSA_RECALLS" and external_id:
+    if source in MARKETPLACE_SOURCES:
+        listing_url = str(payload.get("url", "")).strip()
+        if listing_url:
+            return listing_url
+
+    if source == SOURCE_NHTSA_RECALLS and external_id:
         return f"https://www.nhtsa.gov/recalls?nhtsaId={quote_plus(external_id)}"
-    if source in {"NHTSA_vPIC_MODELS", "NHTSA_vPIC"} and model_year:
+    if source in {SOURCE_NHTSA_VPIC, "NHTSA_vPIC"} and model_year:
         return (
             "https://vpic.nhtsa.dot.gov/api/vehicles/"
             f"GetModelsForMakeYear/make/toyota/modelyear/{model_year}?format=json"
         )
-    if source == "FUEL_ECONOMY_MENU" and model_year and model_name:
+    if source == SOURCE_FUEL_ECONOMY and model_year and model_name:
         return (
             "https://www.fueleconomy.gov/feg/PowerSearch.do?action=PowerSearch"
             f"&year1={model_year}&year2={model_year}&make=Toyota&model={quote_plus(model_name)}"
@@ -339,9 +530,17 @@ def render_dashboard(echoed_text: str | None = None) -> str:
     min_year, max_year = scoped_year_filters(min_year, max_year)
 
     model_contains = request.args.get("model_contains", "").strip()
-    rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
+    rows = fetch_inventory_rows(
+        min_year=min_year,
+        max_year=max_year,
+        model_contains=model_contains,
+        marketplace_only=True,
+    )
     for row in rows:
         row["external_url"] = build_external_detail_url(row)
+        row["source_label"] = source_display_name(str(row.get("source", "")))
+        payload = parse_payload(row)
+        row["listing_price"] = payload.get("price")
     summary = summarize_inventory(rows)
 
     return render_template(
@@ -380,7 +579,12 @@ def api_inventory() -> Response:
     max_year = parse_int(request.args.get("max_year"))
     min_year, max_year = scoped_year_filters(min_year, max_year)
     model_contains = request.args.get("model_contains", "").strip()
-    rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
+    rows = fetch_inventory_rows(
+        min_year=min_year,
+        max_year=max_year,
+        model_contains=model_contains,
+        marketplace_only=True,
+    )
     return jsonify({"count": len(rows), "items": rows})
 
 
@@ -390,7 +594,12 @@ def api_summary() -> Response:
     max_year = parse_int(request.args.get("max_year"))
     min_year, max_year = scoped_year_filters(min_year, max_year)
     model_contains = request.args.get("model_contains", "").strip()
-    rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
+    rows = fetch_inventory_rows(
+        min_year=min_year,
+        max_year=max_year,
+        model_contains=model_contains,
+        marketplace_only=True,
+    )
     summary = summarize_inventory(rows)
     summary["request_count"] = REQUEST_COUNT
     return jsonify(summary)
@@ -416,7 +625,9 @@ def health() -> tuple[dict[str, Any], int]:
 @app.route("/metrics", methods=["GET"])
 def metrics() -> Response:
     min_year, max_year = scoped_year_filters(None, None)
-    summary = summarize_inventory(fetch_inventory_rows(min_year=min_year, max_year=max_year, limit=1000))
+    summary = summarize_inventory(
+        fetch_inventory_rows(min_year=min_year, max_year=max_year, marketplace_only=True, limit=1000)
+    )
     lines = [
         "# HELP app_requests_total Total HTTP requests handled by the app",
         "# TYPE app_requests_total counter",

@@ -4,7 +4,8 @@ Production-ready Flask web app for the CSCA 5028 final project.
 
 ## Features
 
-- Reporting UI backed by persisted inventory data.
+- Reporting UI backed by persisted inventory data, focused on model year 1987.
+- Marketplace-oriented listing view with direct links to listing details.
 - REST API endpoints:
   - `GET /api/v1/inventory`
   - `GET /api/v1/summary`
@@ -19,6 +20,9 @@ Production-ready Flask web app for the CSCA 5028 final project.
 - This app is the stateless web process.
 - Data collection and analysis are independent processes in the collector repository.
 - The app reads persisted records and exposes filtered reporting and rollups.
+- Marketplace sources surfaced in the UI include:
+  - Bring a Trailer
+  - ClassicCars.com
 
 ## Run locally
 

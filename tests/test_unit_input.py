@@ -1,4 +1,4 @@
-from src.app import normalize_user_input, parse_int, summarize_inventory
+from src.app import build_external_detail_url, normalize_user_input, parse_int, summarize_inventory
 
 
 def test_normalize_user_input_trims_whitespace() -> None:
@@ -34,3 +34,16 @@ def test_summarize_inventory_returns_correct_rollup() -> None:
         "year_start": 1987,
         "year_end": 1988,
     }
+
+
+def test_build_external_detail_url_prefers_marketplace_payload_url() -> None:
+    row = {
+        "source": "CLASSICCARS_LISTINGS",
+        "external_id": "CC-123",
+        "model_year": 1987,
+        "model_name": "1987 Toyota Land Cruiser",
+        "payload_json": (
+            '{"marketplace":"ClassicCars.com","url":"https://www.classiccars.com/listings/view/123/"}'
+        ),
+    }
+    assert build_external_detail_url(row) == "https://www.classiccars.com/listings/view/123/"
