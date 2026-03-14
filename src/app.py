@@ -3,16 +3,32 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import requests
 from flask import Flask, Response, jsonify, render_template, request
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "land_cruiser.sqlite3"
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 REQUEST_COUNT = 0
+SEED_YEAR_START = 1980
+SEED_YEAR_END = 1990
+REQUEST_HEADERS = {"User-Agent": "csca5028-land-cruiser-finder-web/1.0"}
+VPIC_URL_TEMPLATE = (
+    "https://vpic.nhtsa.dot.gov/api/vehicles/"
+    "GetModelsForMakeYear/make/toyota/modelyear/{year}?format=json"
+)
+RECALLS_URL_TEMPLATE = (
+    "https://api.nhtsa.gov/recalls/recallsByVehicle?"
+    "make=TOYOTA&model=LAND%20CRUISER&modelYear={year}"
+)
+FUEL_MODEL_MENU_TEMPLATE = (
+    "https://www.fueleconomy.gov/ws/rest/vehicle/menu/model?year={year}&make=Toyota"
+)
 
 SAMPLE_RECORDS: list[dict[str, Any]] = [
     {"external_id": "1001", "model_name": "Land Cruiser", "model_year": 1981},
@@ -59,6 +75,97 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def online_seed_enabled() -> bool:
+    return os.getenv("ONLINE_SEED_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def fetch_seed_records_from_online_sources() -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for year in range(SEED_YEAR_START, SEED_YEAR_END + 1):
+        try:
+            vpic_response = requests.get(
+                VPIC_URL_TEMPLATE.format(year=year),
+                timeout=15,
+                headers=REQUEST_HEADERS,
+            )
+            vpic_response.raise_for_status()
+            payload = vpic_response.json()
+            for row in payload.get("Results", []):
+                model_name = str(row.get("Model_Name", "")).strip()
+                if "LAND CRUISER" not in model_name.upper():
+                    continue
+                model_id = str(row.get("Model_ID", "")).strip()
+                if not model_id:
+                    continue
+                records.append(
+                    {
+                        "source": "NHTSA_vPIC_MODELS",
+                        "external_id": model_id,
+                        "make_name": str(row.get("Make_Name", "TOYOTA")).strip() or "TOYOTA",
+                        "model_name": model_name,
+                        "model_year": year,
+                        "payload_json": json.dumps(row, ensure_ascii=True),
+                    }
+                )
+        except Exception:
+            pass
+
+        try:
+            recalls_response = requests.get(
+                RECALLS_URL_TEMPLATE.format(year=year),
+                timeout=15,
+                headers=REQUEST_HEADERS,
+            )
+            recalls_response.raise_for_status()
+            recalls_payload = recalls_response.json()
+            for row in recalls_payload.get("results", []):
+                campaign = str(row.get("NHTSACampaignNumber", "")).strip()
+                if not campaign:
+                    continue
+                records.append(
+                    {
+                        "source": "NHTSA_RECALLS",
+                        "external_id": campaign,
+                        "make_name": str(row.get("Make", "TOYOTA")).strip() or "TOYOTA",
+                        "model_name": str(row.get("Model", "LAND CRUISER")).strip() or "LAND CRUISER",
+                        "model_year": year,
+                        "payload_json": json.dumps(row, ensure_ascii=True),
+                    }
+                )
+        except Exception:
+            pass
+
+        try:
+            fuel_response = requests.get(
+                FUEL_MODEL_MENU_TEMPLATE.format(year=year),
+                timeout=15,
+                headers=REQUEST_HEADERS,
+            )
+            fuel_response.raise_for_status()
+            root = ET.fromstring(fuel_response.text)
+            for menu_item in root.findall(".//menuItem"):
+                model_name = (menu_item.findtext("text") or "").strip()
+                if "CRUISER" not in model_name.upper():
+                    continue
+                external_id = (menu_item.findtext("value") or model_name).strip()
+                if not external_id:
+                    continue
+                payload = {"text": model_name, "value": external_id, "model_year": year}
+                records.append(
+                    {
+                        "source": "FUEL_ECONOMY_MENU",
+                        "external_id": external_id,
+                        "make_name": "TOYOTA",
+                        "model_name": model_name,
+                        "model_year": year,
+                        "payload_json": json.dumps(payload, ensure_ascii=True),
+                    }
+                )
+        except Exception:
+            pass
+    return records
+
+
 def ensure_schema_and_seed() -> None:
     with get_connection() as conn:
         conn.execute(
@@ -81,19 +188,38 @@ def ensure_schema_and_seed() -> None:
             return
 
         now = datetime.now(timezone.utc).isoformat()
-        payload = []
-        for row in SAMPLE_RECORDS:
-            payload.append(
-                (
-                    "SEED_DEMO",
-                    row["external_id"],
-                    "TOYOTA",
-                    row["model_name"],
-                    row["model_year"],
-                    json.dumps(row, ensure_ascii=True),
-                    now,
+        payload: list[tuple[str, str, str, str, int, str, str]] = []
+
+        api_seed_records: list[dict[str, Any]] = []
+        if online_seed_enabled():
+            api_seed_records = fetch_seed_records_from_online_sources()
+
+        if api_seed_records:
+            for row in api_seed_records:
+                payload.append(
+                    (
+                        str(row["source"]),
+                        str(row["external_id"]),
+                        str(row["make_name"]),
+                        str(row["model_name"]),
+                        int(row["model_year"]),
+                        str(row["payload_json"]),
+                        now,
+                    )
                 )
-            )
+        else:
+            for row in SAMPLE_RECORDS:
+                payload.append(
+                    (
+                        "SEED_DEMO",
+                        row["external_id"],
+                        "TOYOTA",
+                        row["model_name"],
+                        row["model_year"],
+                        json.dumps(row, ensure_ascii=True),
+                        now,
+                    )
+                )
         conn.executemany(
             """
             INSERT OR IGNORE INTO raw_inventory
