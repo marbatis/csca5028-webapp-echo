@@ -7,7 +7,7 @@
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        max-width: 860px;
+        max-width: 1080px;
         margin: 2rem auto;
         padding: 0 1rem;
       }
@@ -28,19 +28,76 @@
       .panel ul {
         margin: 0.4rem 0 0;
       }
-      form {
+      .row {
         display: flex;
         gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .row > * {
+        min-width: 120px;
       }
       input[type='text'] {
-        flex: 1;
         padding: 0.6rem;
         font-size: 1rem;
+        min-width: 220px;
+      }
+      input[type='number'] {
+        padding: 0.6rem;
+        font-size: 1rem;
+        width: 140px;
       }
       button {
         padding: 0.6rem 1rem;
         font-size: 1rem;
         cursor: pointer;
+      }
+      .link-button {
+        display: inline-block;
+        padding: 0.6rem 1rem;
+        border: 1px solid #bfc8d8;
+        border-radius: 4px;
+        text-decoration: none;
+        color: #1f2f46;
+        background: #f9fbfe;
+      }
+      .summary-grid {
+        display: grid;
+        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin: 1rem 0;
+      }
+      .summary-card {
+        background: #f8fbff;
+        border: 1px solid #dae3ef;
+        border-radius: 8px;
+        padding: 0.75rem;
+      }
+      .summary-label {
+        color: #46658a;
+        font-size: 0.9rem;
+      }
+      .summary-value {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-top: 0.2rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+      }
+      th,
+      td {
+        border: 1px solid #e1e7f0;
+        padding: 0.5rem;
+        text-align: left;
+        font-size: 0.95rem;
+      }
+      th {
+        background: #f3f7fc;
+      }
+      .muted {
+        color: #5f6f85;
       }
       .result {
         margin-top: 1rem;
@@ -65,11 +122,11 @@
       <strong>Capstone Components</strong>
       <ul>
         <li>Web App: stateless process serving user requests and REST endpoints</li>
-        <li>Data Collector: independent process that fetches data from external APIs</li>
+        <li>Data Collector: independent process that fetches data from external APIs and RSS</li>
         <li>Data Analyzer: independent process that reads raw data and writes rollups</li>
         <li>Event Collaboration: RabbitMQ producer/consumer for async component communication</li>
       </ul>
-      <p>Monitoring endpoint: <code>/health</code></p>
+      <p>Monitoring endpoints: <code>/health</code>, <code>/metrics</code></p>
     </div>
 
     <div class="panel">
@@ -83,9 +140,83 @@
       <p>Each process can run, scale, and fail independently without blocking the others.</p>
     </div>
 
-    <p>Interaction demo: enter text and submit to verify request/response behavior.</p>
+    <h2>Inventory Report</h2>
+    <p class="muted">Filtered view over persisted records loaded by the collector process.</p>
+    <form action="/" method="get" class="row">
+      <input type="number" name="min_year" value="{{ filters.min_year }}" placeholder="Min year" />
+      <input type="number" name="max_year" value="{{ filters.max_year }}" placeholder="Max year" />
+      <input
+        type="text"
+        name="model_contains"
+        value="{{ filters.model_contains }}"
+        placeholder="Model contains..."
+      />
+      <button type="submit">Apply Filters</button>
+      <a class="link-button" href="/">Reset</a>
+    </form>
 
-    <form action="/echo" method="post">
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">Total Records</div>
+        <div class="summary-value">{{ summary.total_records }}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Distinct Years</div>
+        <div class="summary-value">{{ summary.distinct_years }}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Year Start</div>
+        <div class="summary-value">{{ summary.year_start if summary.year_start is not none else "N/A" }}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Year End</div>
+        <div class="summary-value">{{ summary.year_end if summary.year_end is not none else "N/A" }}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Year</th>
+          <th>Model</th>
+          <th>Make</th>
+          <th>Source</th>
+          <th>External ID</th>
+          <th>Fetched At (UTC)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if rows %}
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.model_year }}</td>
+              <td>{{ row.model_name }}</td>
+              <td>{{ row.make_name }}</td>
+              <td>{{ row.source }}</td>
+              <td>{{ row.external_id }}</td>
+              <td>{{ row.fetched_at }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="6">No records match your filters.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <p class="muted">
+      API endpoints:
+      <a href="/api/v1/inventory">/api/v1/inventory</a> |
+      <a href="/api/v1/summary">/api/v1/summary</a> |
+      <a href="/health">/health</a> |
+      <a href="/metrics">/metrics</a>
+    </p>
+
+    <h2>Interaction Demo</h2>
+    <p>Enter text and submit to verify request/response behavior.</p>
+
+    <form action="/echo" method="post" class="row">
       <input type="text" name="user_input" placeholder="Enter note or query..." required />
       <button type="submit">Submit</button>
     </form>
