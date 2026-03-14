@@ -141,7 +141,10 @@
     </div>
 
     <h2>Inventory Report</h2>
-    <p class="muted">Filtered view over persisted records loaded by the collector process.</p>
+    <p class="muted">
+      Filtered view over persisted records loaded by the collector process.
+      Default view is focused on model year <strong>1987</strong>.
+    </p>
     <form action="/" method="get" class="row">
       <input type="number" name="min_year" value="{{ filters.min_year }}" placeholder="Min year" />
       <input type="number" name="max_year" value="{{ filters.max_year }}" placeholder="Max year" />
@@ -182,6 +185,7 @@
           <th>Make</th>
           <th>Source</th>
           <th>External ID</th>
+          <th>Reference Link</th>
           <th>Fetched At (UTC)</th>
         </tr>
       </thead>
@@ -194,12 +198,19 @@
               <td>{{ row.make_name }}</td>
               <td>{{ row.source }}</td>
               <td>{{ row.external_id }}</td>
+              <td>
+                {% if row.external_url %}
+                  <a href="{{ row.external_url }}" target="_blank" rel="noopener noreferrer">Open source</a>
+                {% else %}
+                  N/A
+                {% endif %}
+              </td>
               <td>{{ row.fetched_at }}</td>
             </tr>
           {% endfor %}
         {% else %}
           <tr>
-            <td colspan="6">No records match your filters.</td>
+            <td colspan="7">No records match your filters.</td>
           </tr>
         {% endif %}
       </tbody>

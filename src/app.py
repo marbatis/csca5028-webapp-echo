@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 import requests
 from flask import Flask, Response, jsonify, render_template, request
@@ -282,11 +283,39 @@ def summarize_inventory(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_external_detail_url(row: dict[str, Any]) -> str | None:
+    source = str(row.get("source", "")).strip()
+    external_id = str(row.get("external_id", "")).strip()
+    model_year = int(row.get("model_year", 0) or 0)
+    model_name = str(row.get("model_name", "")).strip()
+
+    if source == "NHTSA_RECALLS" and external_id:
+        return f"https://www.nhtsa.gov/recalls?nhtsaId={quote_plus(external_id)}"
+    if source in {"NHTSA_vPIC_MODELS", "NHTSA_vPIC"} and model_year:
+        return (
+            "https://vpic.nhtsa.dot.gov/api/vehicles/"
+            f"GetModelsForMakeYear/make/toyota/modelyear/{model_year}?format=json"
+        )
+    if source == "FUEL_ECONOMY_MENU" and model_year and model_name:
+        return (
+            "https://www.fueleconomy.gov/feg/PowerSearch.do?action=PowerSearch"
+            f"&year1={model_year}&year2={model_year}&make=Toyota&model={quote_plus(model_name)}"
+            "&srchtyp=ymm&pageno=1"
+        )
+    return None
+
+
 def render_dashboard(echoed_text: str | None = None) -> str:
     min_year = parse_int(request.args.get("min_year"))
     max_year = parse_int(request.args.get("max_year"))
+    if min_year is None and max_year is None:
+        min_year = 1987
+        max_year = 1987
+
     model_contains = request.args.get("model_contains", "").strip()
     rows = fetch_inventory_rows(min_year=min_year, max_year=max_year, model_contains=model_contains)
+    for row in rows:
+        row["external_url"] = build_external_detail_url(row)
     summary = summarize_inventory(rows)
 
     return render_template(
